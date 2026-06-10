@@ -4,7 +4,6 @@ import numpy as np
 import joblib
 import json
 import time
-
 import pyttsx3
 from threading import Thread
 
@@ -43,6 +42,8 @@ def main_app():
     frame_count = 0
     fps_time = time.time()
     fps = 0
+    sign_hold_count = 0
+    HOLD_THRESHOLD = 10
     
     print("\n" + "="*60)
     print("🎯 ISL Real-Time Sign Language Translator - Main App")
@@ -88,17 +89,31 @@ def main_app():
             landmarks = scaler.transform(landmarks)
             current_sign = model.predict(landmarks)[0]
             
-            # Add to history if different from previous
+            # Update history
             if current_sign != prev_sign:
                 sign_history.append(current_sign)
                 if len(sign_history) > 5:
                     sign_history.pop(0)
-                prev_sign = current_sign
+                sign_hold_count = 0
+            
+            # Count frames sign is held
+            if current_sign == prev_sign:
+                sign_hold_count += 1
+            
+            prev_sign = current_sign
             
             # Draw landmarks
             mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
         else:
+            # Hand disappeared - add sign if it was held long enough
+            if prev_sign != "" and sign_hold_count >= HOLD_THRESHOLD:
+                if not sentence_buffer or sentence_buffer[-1] != prev_sign:
+                    sentence_buffer.append(prev_sign)
+                    print(f"✅ Added '{prev_sign}' to sentence | Sentence: {''.join(sentence_buffer)}")
+            
             prev_sign = ""
+            current_sign = ""
+            sign_hold_count = 0
         
         # FPS calculation
         frame_count += 1
@@ -108,7 +123,6 @@ def main_app():
             fps_time = time.time()
         
         # Draw UI
-        # Dark background panel at bottom
         cv2.rectangle(frame, (0, h-120), (w, h), (30, 30, 30), -1)
         
         # Current sign display
@@ -118,12 +132,12 @@ def main_app():
         sentence_text = ' '.join(sentence_buffer)
         cv2.putText(frame, f"Sentence: {sentence_text}", (10, h-70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         
-        # History panel (left side)
+        # History panel
         cv2.putText(frame, "History:", (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 200, 255), 1)
         for i, sign in enumerate(sign_history):
             cv2.putText(frame, f"  {sign}", (10, 125 + i*20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
         
-        # FPS display (top right)
+        # FPS display
         cv2.putText(frame, f"FPS: {fps:.1f}", (w-120, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1)
         
         # Instructions
@@ -135,37 +149,30 @@ def main_app():
         # Keyboard controls
         key = cv2.waitKey(1) & 0xFF
         
-        if key == ord(' '):  # SPACE - add space
+        if key == ord(' '):
             if sentence_buffer and sentence_buffer[-1] != ' ':
                 sentence_buffer.append(' ')
                 print(f"✅ Added space | Sentence: {''.join(sentence_buffer)}")
         
-        elif key == ord('\b') or key == 8:  # BACKSPACE - delete last
+        elif key == ord('\b') or key == 8:
             if sentence_buffer:
                 sentence_buffer.pop()
                 print(f"🗑️  Deleted last | Sentence: {''.join(sentence_buffer)}")
         
-        elif key == ord('\r') or key == 13:  # ENTER - speak sentence
+        elif key == ord('\r') or key == 13:
             sentence_text = ''.join(sentence_buffer).strip()
             if sentence_text:
                 print(f"🔊 Speaking: {sentence_text}")
-                # Speak in separate thread to not block UI
-                Thread(target=tts_engine.say(sentence_text), args=()).start()
+                tts_engine.say(sentence_text)
                 tts_engine.runAndWait()
         
-        elif key == ord('c') or key == ord('C'):  # C - clear
+        elif key == ord('c') or key == ord('C'):
             sentence_buffer = []
             print("🗑️  Cleared sentence")
         
-        elif key == ord('q') or key == ord('Q'):  # Q - quit
+        elif key == ord('q') or key == ord('Q'):
             print("👋 Exiting...")
             break
-        
-        # Add current sign to sentence when confirmed
-        if current_sign and current_sign != prev_sign and len(sign_history) > 1:
-            if not sentence_buffer or sentence_buffer[-1] != current_sign:
-                sentence_buffer.append(current_sign)
-                print(f"✅ Added '{current_sign}' | Sentence: {''.join(sentence_buffer)}")
     
     cap.release()
     cv2.destroyAllWindows()
